@@ -1,0 +1,10 @@
+
+  model {
+    for ( i in 1:Ntotal ) {
+      y[i] ~ dbern( theta[s[i]] )   # because true for all i in y
+    }
+    for ( sIdx in 1:Nsubj ) {
+      theta[sIdx] ~ dbeta( 10 , 1 )
+    }
+  }
+  

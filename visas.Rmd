@@ -1,0 +1,600 @@
+---
+title: "Visas"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# # Data Loading and Cleaning
+
+
+```{r Set Working Directory}
+#Set working directory
+
+setwd("C:/Users/sjcrum/Documents/Bayesian Statistics/DataSets/Visas")
+```
+
+```{r Packages}
+#Install and Load Packages
+
+#install.packages("data.table")
+#install.packages("caret")
+#install.packages("dummies", dependencies=TRUE, repos='http://cran.rstudio.com/')
+#install.packages("lubridate", dependencies=TRUE, repos='http://cran.rstudio.com/')
+#install.packages("zoo", dependencies=TRUE, repos='http://cran.rstudio.com/')
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(dummies)
+library(lubridate)
+library(zoo)
+```
+
+
+```{r Load Data}
+#Load data
+
+visa <- fread("us_perm_visas.csv", na.strings = "")
+```
+
+
+# # Data Reduction
+
+
+```{r Total NA's}
+# How many are there
+sum(is.na(visa))
+
+# Break down missing values by variable
+sapply(visa, function(x) sum(is.na(x)))
+```
+
+
+```{r Reduce Columns}
+#Select usable variables 
+
+visa_sub <- visa[, c("case_status",
+                     "class_of_admission",
+                     "country_of_citizenship",
+                     "decision_date",
+                     "employer_city",
+                     "employer_name",
+                     "employer_num_employees",
+                     "employer_state",
+                     "foreign_worker_info_birth_country",
+                     "foreign_worker_info_city",
+                     "foreign_worker_info_education",
+                     "foreign_worker_info_education_other",
+                     "foreign_worker_info_inst",
+                     "foreign_worker_info_major",
+                     "foreign_worker_info_req_experience",
+                     "foreign_worker_info_state",
+                     "fw_info_yr_rel_edu_completed",
+                     "job_info_experience_num_months",
+                     "job_info_work_state",
+                     "naics_2007_us_title",
+                     "pw_job_title_9089",
+                     "pw_level_9089",
+                     "pw_unit_of_pay_9089",
+                     "recr_info_sunday_newspaper",
+                     "ri_layoff_in_past_six_months",
+                     "wage_offer_unit_of_pay_9089",
+                     "pw_amount_9089",
+                     "wage_offer_concat")]
+```
+
+
+```{r Total NA's in reduced dataframe}
+# How many are there
+sum(is.na(visa_sub))
+
+# Break down missing values by variable
+sapply(visa_sub, function(x) sum(is.na(x)))
+```
+
+```{r Checking state variables}
+#Check different state variables for differences
+#They are not similar for the most part
+
+state_diff <- visa_sub[visa_sub$employer_state != visa_sub$job_info_work_state]
+state_diff1 <- visa_sub[visa_sub$employer_state != visa_sub$foreign_worker_info_state]
+state_diff2 <- visa_sub[visa_sub$job_info_work_state != visa_sub$foreign_worker_info_state]
+nrow(state_diff) / nrow(visa_sub)
+nrow(state_diff1) / nrow(visa_sub)
+nrow(state_diff2) / nrow(visa_sub)
+```
+
+
+
+
+```{r Further reduction}
+#Reduce to more usable variables
+
+visa_small <- visa_sub[, c("case_status",
+                     "class_of_admission",
+                     "country_of_citizenship",
+                     "decision_date",
+                     "employer_name",
+                     "employer_num_employees",
+                     "employer_state",
+                     "foreign_worker_info_education",
+                     "job_info_work_state",
+                     "pw_level_9089",
+                     "pw_unit_of_pay_9089",
+                     "pw_amount_9089",
+                     "recr_info_sunday_newspaper",
+                     "ri_layoff_in_past_six_months")]
+```
+
+
+
+
+```{r Total NA's in further reduction dataframe }
+# How many are there
+sum(is.na(visa_small))
+
+# Break down missing values by variable
+sapply(visa_small, function(x) sum(is.na(x)))
+```
+
+
+```{r Remove all rows with NA values}
+#Omit all rows with NA values
+visa_full <- na.omit(visa_small)
+```
+
+
+```{r Data Type Correction}
+#Convert all variables to necessary data types for analyssi
+
+visa_full$case_status <- as.factor(visa_full$case_status)
+visa_full$employer_num_employees <- as.integer(visa_full$employer_num_employees)
+visa_full$pw_level_9089 <- as.factor(visa_full$pw_level_9089)
+visa_full$pw_amount_9089 <- as.numeric(visa_full$pw_amount_9089)
+visa_full$pw_level_9089 <- as.factor(visa_full$pw_level_9089)
+visa_full$recr_info_sunday_newspaper <- as.factor(visa_full$recr_info_sunday_newspaper)
+visa_full$ri_layoff_in_past_six_months <- as.factor(visa_full$ri_layoff_in_past_six_months)
+visa_full$decision_date <- as.Date(visa_full$decision_date, format = "%m/%d/%Y")
+
+#Confirm data type correction
+sapply(visa_full, function(x) typeof(x))
+```
+
+
+# # Decision Date
+
+
+```{r Making Day, Month, Year Vars}
+#Convert decision data to Date type and extract day, month, and year as separate variables
+visa_full$decision_day <- day(as.POSIXlt(visa_full$decision_date, format="%m/%d/%Y"))
+visa_full$decision_month <- month(as.POSIXlt(visa_full$decision_date, format="%m/%d/%Y"))
+visa_full$decision_year <- year(as.POSIXlt(visa_full$decision_date, format="%m/%d/%Y"))
+```
+
+
+
+```{r Plotting Decision Rate and Total Visas over Time}}
+#Calculate monthly denial rate
+decisionDate <- visa_full %>% group_by(decision_year, decision_month) %>% summarise(total_visas = n(), denial_rate = sum(case_status == "Denied") / n())
+
+#Create year-month variable in new date dataframe
+decisionDate$yearmon <- paste(decisionDate$decision_month, decisionDate$decision_year, sep = "-")
+decisionDate$yearmon <- as.factor(as.yearmon(decisionDate$yearmon, format = "%m-%Y"))
+
+#Plot total visa applications by month and year
+a <- ggplot(decisionDate, aes(x = yearmon, y = total_visas, group = 1)) + geom_line(colour = "red") + geom_point() + labs(x = "Month of Decision", y = "Total Visa Applications", title = "Total Visa Applications by Month", subtitle = "Oct 2014 - Dec 2016") + theme(axis.text.x=element_text(angle=70,hjust=1))
+
+#Plot overall denial rate by month and year
+b <- ggplot(decisionDate, aes(x = yearmon, y = denial_rate, group = 1)) + geom_line(colour = "blue") + labs(x = "Month of Decision", y = "Visa Applications Denial Rate", title = "Overall Visa Denial Rate5 by Month", subtitle = "Oct 2014 - Dec 2016") + theme(axis.text.x=element_text(angle=70,hjust=1))
+
+source("http://peterhaschke.com/Code/multiplot.R")
+#Arrange two plots together for comparison
+multiplot(a, b, cols = 1)
+```
+
+
+
+```{r Adding Date Variables}
+#Extract month and year for indexing and joining
+decisionJoin <- decisionDate[c(3,5)]
+
+#Create and year-month variable in dataset for joining
+visa_full$yearmon <- paste(visa_full$decision_month, visa_full$decision_year, sep = "-")
+visa_full$yearmon <- as.factor(as.yearmon(visa_full$yearmon, format = "%m-%Y"))
+
+#Join originial data and new date variables
+visa_full <- merge(visa_full, decisionJoin, by = "yearmon", all = TRUE)
+visa_full <- subset(visa_full, select=-c(yearmon))
+```
+
+
+
+# # Day and Month
+
+
+```{r Denial Rate by Day}
+#Denial rate by day
+visa_full %>% group_by(decision_day) %>% summarise(total = n(), Denial_Rate = sum(case_status == "Denied") / n())
+```
+
+
+```{r Denial Rate by Month}
+#Denial rate by month
+visa_full %>% group_by(decision_month) %>% summarise(total = n(), Denial_Rate = sum(case_status == "Denied") / n())
+```
+
+
+
+
+# # Case Status
+
+
+```{r Examine and reassign case status factor values}
+#Examine factor levels of case status
+print(visa_full %>% group_by(case_status) %>% summarise(Total = n()) %>% arrange(desc(Total)))
+
+#Remove any withdrawn applications
+visa_full <- visa_full %>% filter(case_status != "Withdrawn")
+
+#Convert certified-expired to certified
+index <- which(visa_full$case_status == "Certified-Expired")
+visa_full[index, 'case_status'] <- "Certified"
+
+#Distribution of case status results
+caseStatusDist <- visa_full %>% group_by(case_status) %>% summarise(Total = n()) %>% arrange(desc(Total))
+
+caseStatusDist
+
+#Overall denial rate
+totalDenialRate <- caseStatusDist$Total[2] / sum(caseStatusDist$Total) 
+totalDenialRate
+```
+
+
+# # Class of Admission
+
+```{r Admission Class}
+#Examine distribution of class of admission and denial rate
+print(visa_full %>% group_by(class_of_admission) %>% summarise(Total = n(), Denial_Rate = sum(case_status == "Denied") / n()) %>% arrange(desc(Total)))
+```
+
+
+
+# Pay Unit
+
+
+```{r Examine Level of Pay}
+#Extract level of pay and pay amount
+levelsOfPay <- visa_full[, c("pw_unit_of_pay_9089", "pw_amount_9089")]
+
+#Remove pay over $500,000 for graphing
+levelsOfPayNoOutliers <- levelsOfPay %>% filter(pw_amount_9089 <= 500000) 
+
+#Graph level of pay vs pay amount
+ggplot(levelsOfPayNoOutliers, aes(x = pw_unit_of_pay_9089, y = pw_amount_9089)) + geom_boxplot()
+
+#Noticed incorrect data in hourly boxplot
+```
+
+
+
+```{r Fix level of pay}
+#Extract hourly pay applications
+levelsOfPayHour <- levelsOfPay %>% filter(pw_unit_of_pay_9089 == "Hour") 
+
+
+#Remove three variables (191966 rows remaining)
+visa_full <- visa_full[!(visa_full$pw_unit_of_pay_9089 == "Hour" 
+                  & visa_full$pw_amount_9089 > 150
+                  & visa_full$pw_amount_9089 < 20000), ]
+
+
+#Convert obvious yearly salaries to 'Yearly' pay unit
+index <- which(visa_full$pw_unit_of_pay_9089 == "Hour" & visa_full$pw_amount_9089 >= 20000)
+visa_full[index, 'pw_unit_of_pay_9089'] <- "Year"
+
+
+#Check for remaining outliers
+levelsOfPayHourOutliers <- visa_full %>% filter(pw_unit_of_pay_9089 == "Hour" & pw_amount_9089 > 150) 
+print(levelsOfPayHourOutliers)
+```
+
+
+
+```{r}
+denialRateBySalaryUnit <- visa_full %>% group_by(pw_unit_of_pay_9089) %>% summarise(Total = n(), Denial_Rate = sum(case_status == "Denied") / n()) %>% arrange(desc(Total)) 
+
+denialRateBySalaryUnit
+```
+
+
+
+# # Pay Amount
+
+```{r Salary vs Denial}
+visa_full_no_outliers <- visa_full %>% filter(pw_amount_9089 <= 300000)
+
+qplot(visa_full_no_outliers$pw_amount_9089, geom = "histogram", binwidth = 10000, fill = visa_full_no_outliers$case_status, col = I("grey"), xlab = "Salary", ylab = "Total Visa Applications", main = "Case Status By Salary") + scale_fill_discrete("Case Status") 
+
+visa_full_outliers <- visa_full %>% filter(pw_amount_9089 > 300000) 
+salary_outliers <- visa_full_outliers[, c("pw_amount_9089", "case_status")]
+salary_outliers
+```
+
+
+
+
+
+# # Country of Citizenship
+
+```{r}
+immigrants <- visa_full %>% group_by(country_of_citizenship) %>% summarise(total_immigrants = n(), denial_rate = sum(case_status == "Denied") / n()) %>% arrange(desc(total_immigrants))
+
+top20Imm <- immigrants[1:20, ]
+
+top20Imm
+
+ggplot(top20Imm, aes(x = reorder(country_of_citizenship, total_immigrants), y = total_immigrants)) + geom_bar(stat = "identity", fill = "salmon") + xlab("Country of Citizenship") + ylab("Total Visa Applications") + ggtitle("Countries with Most Visa Applications") + geom_text(aes(label=top20Imm$total_immigrants), position=position_dodge(width=0.4), hjust= .2, size = 2.5) + coord_flip()
+```
+
+
+```{r}
+mostDenied <- immigrants %>% filter(total_immigrants >= 100) %>% arrange(desc(denial_rate))
+
+mostDenied20 <- mostDenied[1:20, ]
+
+ggplot(mostDenied20, aes(x = reorder(country_of_citizenship, denial_rate), y = denial_rate)) + geom_bar(stat = "identity", fill = "steelblue3", color = "grey24") + labs(x = "Country of Citizenship", y = "Proportion of Visa Applications Denied", title = "Countries with the Highest Visa Application Denial Rate", subtitle = "More Than 100 Applications")+ coord_flip()
+```
+
+
+
+
+
+```{r}
+visa_full %>% group_by(recr_info_sunday_newspaper) %>% summarise(total = n(), denial_rate = sum(case_status == "Denied") / n())
+```
+
+
+
+
+```{r}
+visa_full %>% group_by(ri_layoff_in_past_six_months) %>% summarise(total = n(), denial_rate = sum(case_status == "Denied") / n())
+```
+
+
+
+
+```{r}
+#Drop 2 variables
+visa_full <- visa_full %>% filter(employer_num_employees < 5000000)
+```
+
+
+ 
+```{r pay level}
+paylevel <- visa_full %>% group_by(pw_level_9089) %>% summarise(min = min(pw_amount_9089), max = max(pw_amount_9089))
+paylevel
+```
+
+
+
+
+```{r}
+#Dropping rows with missing state data or employer in Canada or US Territories
+visa_full <- visa_full %>% filter(employer_state != "BC" 
+                                  & employer_state != "#N/A"
+                                  & employer_state != "NORTHERN MARIANA ISLANDS"
+                                  & employer_state != "MP"
+                                  & employer_state != "GU"
+                                  & employer_state != "VIRGIN ISLANDS"
+                                  & employer_state != "VI"
+                                  & job_info_work_state != "NORTHERN MARIANA ISLANDS"
+                                  & job_info_work_state != "MP"
+                                  & job_info_work_state != "MARSHALL ISLANDS"
+                                  & job_info_work_state != "BC"
+                                  & job_info_work_state != "FEDERATED STATES OF MICRONESIA"
+                                  & job_info_work_state != "GUAM"
+                                  & job_info_work_state != "GU"
+                                  & job_info_work_state != "PEURTO RICO"
+                                  & job_info_work_state != "PR"
+                                  & job_info_work_state != "VIRGIN ISLANDS"
+                                  & job_info_work_state != "VI")
+
+states <- visa_full %>% group_by(employer_state) %>% summarise(total_immigrants = n(), denial_rate = sum(case_status == "Denied") / n()) %>% arrange(desc(total_immigrants))
+
+statesTop20 <- states[1:20,] 
+
+statesDenial <- visa_full %>% group_by(employer_state) %>% summarise(total_immigrants = n(), denial_rate = sum(case_status == "Denied") / n()) %>% filter(total_immigrants >= 100) %>% arrange(desc(denial_rate))
+
+statesDenialTop20 <- statesDenial[1:20,]
+statesDenialTop20$denial_rate <- round(statesDenialTop20$denial_rate, 3)
+
+ggplot(statesTop20, aes(x = reorder(employer_state, total_immigrants), y = total_immigrants)) + geom_bar(stat = "identity", fill = "salmon") + labs(x = "Employer State", y = "Total Visa Applications", title = "States with Most Visa Applications", subtitle = "Top 20") + geom_text(aes(label=statesTop20$total_immigrants), position=position_dodge(width=0.4), hjust= -.05, size = 2.5) + coord_flip()
+
+ggplot(statesDenialTop20, aes(x = reorder(employer_state, denial_rate), y = denial_rate)) + geom_bar(stat = "identity", fill = "salmon") + labs(x = "Employer State", y = "Proportion Visa Applications Denied", title = "States with Highest Visa Denial Rate", subtitle = "Top 20") + geom_text(aes(label=statesDenialTop20$denial_rate), position=position_dodge(width=0.4), hjust= -.05, size = 2.5) + coord_flip()
+```
+
+
+
+
+
+```{r Case Status by Degree}
+qplot(visa_full$foreign_worker_info_education, geom = "bar", fill = visa_full$case_status, col = I("grey"), xlab = "Salary", ylab = "Total Visa Applications", main = "Case Status By Degree") + scale_fill_discrete("Case Status") + scale_x_discrete(limits=c("None", "High School", "Associates", "Bachelors", "Masters", "Doctorate", "Other")) 
+```
+
+
+
+
+
+
+```{r}
+qplot(visa_full$employer_num_employees, geom = "histogram", binwidth = 250, fill = visa_full$case_status, col = I("grey"), xlab = "Salary", ylab = "Total Visa Applications", main = "Case Status By Salary") + scale_fill_discrete("Case Status") 
+
+print(visa_full %>% group_by(employer_num_employees) %>% summarise(denial_rate = sum(case_status == "Denied") / n()) %>% arrange(desc(employer_num_employees)))
+```
+
+
+
+
+
+
+
+```{r}
+visa_full$case_status <- ifelse(visa_full$case_status == "Certified", 1, 0)
+summary(visa_full$case_status)
+
+visa_full$recr_info_sunday_newspaper <- as.factor(ifelse(visa_full$recr_info_sunday_newspaper == "Y", 1, 0))
+summary(visa_full$recr_info_sunday_newspaper)
+
+visa_full$ri_layoff_in_past_six_months <- as.factor(ifelse(visa_full$ri_layoff_in_past_six_months == "Y", 1, 0))
+summary(visa_full$ri_layoff_in_past_six_months)
+
+```
+
+
+
+
+```{r}
+top53Imm <- immigrants[1:53, ]
+bottomImm <- immigrants[53:187, ]
+
+a <- sum(top53Imm$total_immigrants)
+b <- sum(bottomImm$total_immigrants)
+
+a
+b
+a/(a+b)
+
+visa_full <- visa_full[visa_full$country_of_citizenship %in% top53Imm$country_of_citizenship,]
+```
+
+
+
+```{r}
+visa_full$recr_info_sunday_newspaper <- as.factor(visa_full$recr_info_sunday_newspaper)
+visa_full$ri_layoff_in_past_six_months <- as.factor(visa_full$ri_layoff_in_past_six_months)
+decision_day <- as.factor(visa_full$decision_day)
+decision_month <- as.factor(visa_full$decision_month)
+```
+
+
+
+```{r}
+visa_full$employer_num_employees <- log10(visa_full$employer_num_employees + 1)
+visa_full$pw_amount_9089 <- log10(visa_full$pw_amount_9089)
+
+normalize <- function(x) {
+    return ((x - min(x)) / (max(x) - min(x)))
+}
+
+visa_full$employer_num_employees <- normalize(visa_full$employer_num_employees)
+visa_full$pw_amount_9089 <- normalize(visa_full$pw_amount_9089)
+visa_full$total_visas <- normalize(visa_full$total_visas)
+
+mean(visa_full$employer_num_employees)
+sd(visa_full$employer_num_employees)
+
+mean(visa_full$pw_amount_9089)
+sd(visa_full$pw_amount_9089)
+```
+
+
+
+
+```{r}
+set.seed(29)
+
+inTraining <- createDataPartition(visa_full$case_status, p = .75, list = FALSE)
+
+train <- visa_full[inTraining,]
+test <- visa_full[-inTraining,]
+
+write.csv(train, "training.csv")
+write.csv(test, "testing.csv")
+```
+
+
+
+
+
+
+```{r}
+visa_full$class_of_admission <- as.factor(visa_full$class_of_admission)
+visa_full$country_of_citizenship <- as.factor(visa_full$country_of_citizenship)
+visa_full$employer_name <- as.factor(visa_full$employer_name)
+visa_full$employer_state <- as.factor(visa_full$employer_state)
+visa_full$foreign_worker_info_education <- as.factor(visa_full$foreign_worker_info_education)
+visa_full$pw_unit_of_pay_9089 <- as.factor(visa_full$pw_unit_of_pay_9089)
+```
+
+
+```{r}
+case_status <- visa_full$case_status
+class_of_admission <- dummy(visa_full$class_of_admission)
+country_of_citizenship <- dummy(visa_full$country_of_citizenship)
+employer_name <- as.factor(visa_full$employer_name)
+employer_num_employees <- visa_full$employer_num_employees
+employer_state <- dummy(visa_full$employer_state)
+foreign_worker_info_education <- dummy(visa_full$foreign_worker_info_education)
+job_info_work_state <- dummy(visa_full$job_info_work_state)
+pw_amount_9089 <- visa_full$pw_amount_9089
+pw_unit_of_pay_9089 <- dummy(visa_full$pw_unit_of_pay_9089)
+pw_level_9089 <- dummy(visa_full$pw_level_9089)
+recr_info_sunday_newspaper <- visa_full$recr_info_sunday_newspaper
+ri_layoff_in_past_six_months <- visa_full$ri_layoff_in_past_six_months
+decision_day <- dummy(visa_full$decision_day)
+decision_month <- dummy(visa_full$decision_month)
+total_visas <- visa_full$total_visas
+```
+
+```{r}
+visa_dummy <- cbind(case_status,
+                    class_of_admission,
+                    country_of_citizenship,
+                    foreign_worker_info_education,
+                    employer_num_employees,
+                    employer_state,
+                    job_info_work_state,
+                    pw_amount_9089,
+                    pw_unit_of_pay_9089,
+                    pw_level_9089,
+                    recr_info_sunday_newspaper,
+                    ri_layoff_in_past_six_months,
+                    decision_day,
+                    decision_month,
+                    total_visas)    
+```
+
+
+```{r}
+visa_dummy <- as.data.frame(visa_dummy)
+```
+
+
+
+```{r}
+colnames(visa_dummy)[colnames(visa_dummy)=="V165"] <- "pw_amount_9089"
+colnames(visa_dummy)[colnames(visa_dummy)=="V111"] <- "employer_num_employee"
+colnames(visa_dummy)[colnames(visa_dummy)=="foreign_worker_info_educationHigh School"] <- "foreign_worker_info_educationHigh_School"
+```
+
+
+
+
+```{r}
+set.seed(29)
+
+inTraining_dummy <- createDataPartition(visa_dummy$case_status, p = .75, list = FALSE)
+
+train_dummy <- visa_dummy[inTraining_dummy,]
+test_dummy <- visa_dummy[-inTraining_dummy,]
+
+write.csv(train_dummy, "training_dummy.csv")
+write.csv(test_dummy, "testing_dummy.csv")
+```
+
+

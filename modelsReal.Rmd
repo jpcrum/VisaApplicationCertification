@@ -1,0 +1,314 @@
+---
+title: "Final Project - Frequentist Models"
+author: "Jack Crum"
+data: "4/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r Installing and Loading Packages}
+# Installing and Loading Packages
+
+setwd("C:/Users/sjcrum/Documents/Bayesian Statistics/DataSets/Visas")
+
+#install.packages("MASS", dependencies=TRUE, repos='http://cran.rstudio.com/')
+#install.packages("ggplot2", dependencies=TRUE, repos='http://cran.rstudio.com/')
+#install.packages("caret", dependencies=TRUE, repos='http://cran.rstudio.com/')
+#install.packages("dplyr", dependencies=TRUE, repos='http://cran.rstudio.com/')
+#install.packages("car", dependencies=TRUE, repos='http://cran.rstudio.com/')
+
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(MASS)
+library(corrplot)
+library(xgboost)
+library(data.table)
+library(car)
+
+```
+
+
+
+```{r Loading training and testing sets}
+#Loading training and testing sets
+training <- read.csv("training_dummy.csv")
+testing <- read.csv("testing_dummy.csv")
+
+#Removing first id column 
+training <- training[2:323]
+testing <- testing[2:323]
+
+#Converting the predicted variable 'case_status' into a factor
+training$case_status <- as.factor(training$case_status)
+testing$case_status <- as.factor(testing$case_status)
+
+#Removing case_status to create predictor dataset
+train_X <- training[-1]
+test_X <- testing[-1]
+```
+
+
+
+
+```{r Full Logistic Model}
+#Set seed for reproducibility 
+set.seed(29)
+
+#Train model on whole training dataset
+modelLogit <- glm(case_status ~ ., family=binomial(link='logit'), data=training)
+summary(modelLogit)
+```
+
+
+
+
+```{r Full Logistic Model Prediction}
+# Predict model on testing dataset with a 0.8 classification threshold
+predLogit <- predict(modelLogit, test_X ,type='response')
+predLogit <- ifelse(predLogit > 0.8, 1, 0)
+predLogit <- as.factor(predLogit)
+
+# Calculate and print accuracy
+misClasificError <- mean(predLogit != testing$case_status)
+print(paste('Accuracy:',round(1-misClasificError, 4)))
+
+# Create confusion matrix to calculate model evaluation metrics 
+conf <- confusionMatrix(predLogit, testing$case_status, positive = "1")
+conf
+```
+
+
+
+
+
+
+```{r Plot Thresholds Function}
+# This functoins plots accuracy, sensitivity, and specificity of a model on the same graph across various classification thresholds from 0.5 to 0.95 at 0.05 intervals
+
+plotThresholdScores <- function(model, test_X_data, test_y_data, model_name){
+
+  #Set empty vectors
+  acc <- c()
+  sens <- c()
+  spec <- c()
+  
+  #Set sequence of classification thresholds
+  sequence <- seq(0.5, 0.95, 0.05)
+  
+  #For loop to predict and calculate metrics at each classification threshold
+  for (i in 1:length(sequence)){
+    predLogit <- predict(model, test_X_data ,type='response')
+    pred <- ifelse(predLogit > sequence[i], 1, 0)
+    
+    pred <- as.factor(pred)
+    
+    conf <- confusionMatrix(pred, test_y_data, positive = "1")
+    print(conf)
+    
+    #Append scores to empty vectors
+    acc[i] <- conf$overall["Accuracy"]
+    sens[i] <- conf$byClass["Sensitivity"]
+    spec[i] <- conf$byClass["Specificity"]
+    
+  }
+  
+  #Bind scores into one dataframe
+  df <- as.data.frame(cbind(sequence, acc, sens, spec))
+  
+  print(df)
+  
+  #Plot dataframe
+  ggplot(df) + geom_line(aes(x = sequence, y = acc), color = "green") + geom_line(aes(x = sequence, y = sens), color = "blue") + geom_line(aes(x = sequence, y = spec), color = "red") + labs(x = "Threshold", y = "Metric Score", title = paste("Metric Scores of", model_name))
+}
+
+#Plot threshold scores on full logistic model
+plotThresholdScores(modelLogit, test_X, testing$case_status, "Full Logistic Model")
+```
+
+
+```{r VIF1}
+#Check for multicollinearity
+#Returns an error, which means there is perfect collinearity in the model
+#vif(modelLogit)
+```
+
+
+
+
+```{r Extract Significant Variables}
+#This function extracts all variable names from a model with a p-value below the set threshold to retain only significant variables
+
+signVarCols <- function(model, threshold){
+  
+  #Extract p-values of all variables in the model
+  signifvars <- coef(summary(model))[,4]
+  signifvarsDF <- as.data.frame(signifvars)
+  
+  #Set the row names (variable names) to a column
+  signvars <- setDT(signifvarsDF, keep.rownames = TRUE)[]
+  
+  #Extract only varialbes with signficant p-value
+  signvars <- signvars %>% filter(signifvars <= threshold)
+  
+  #Extract variable names from dataframe
+  colNames <- signvars[,1]
+  
+  #Remove intercept
+  colNames <- colNames[2:length(colNames)]
+  
+  #Return the vector of variable names
+  return(colNames)
+}
+
+#Extract significant variables from full logistic model
+colNames <- signVarCols(modelLogit, 0.01)
+
+#Create new training and testing sets with only significant variables
+training_sub <- training[, c(colNames)]
+testing_sub <- testing[, c(colNames)]
+
+#Bind the predicted variable to the new datasets
+training_sub <- cbind(training$case_status, training_sub)
+testing_sub <- cbind(testing$case_status, testing_sub)
+
+#Move predicted variable to the front
+colnames(training_sub)[1] <- "case_status"
+colnames(testing_sub)[1] <- "case_status"
+```
+
+
+
+
+```{r SignVars Logistic Regression}
+set.seed(29)
+
+#Train model on signficiant logistic model
+modelLogitSub <- glm(case_status ~ ., family=binomial(link='logit'), data=training_sub)
+summary(modelLogitSub)
+```
+
+
+
+```{r VIF2}
+#Test for multicollinearity
+vif(modelLogitSub)
+```
+
+
+```{r Plot Thresholds on signvars logistic}
+#Create new testing data
+test_sub_X <- subset(testing_sub, select = -c(case_status))
+
+#Plot thresholds on signvars logistic
+plotThresholdScores(modelLogitSub, test_sub_X, testing_sub$case_status, "Logisitic Regression Subset")
+```
+
+
+
+```{r Stepwise Logistic}
+#Train stepwise logistic regression model
+stepLogit <- step(modelLogitSub, direction = "both")
+```
+
+
+```{r VIF3}
+#Test for multicollinearity in stepwise model
+vif(stepLogit)
+```
+
+
+```{r Plot Thresholds Stepwise}
+#Plot thresholds of stepwise model
+plotThresholdScores(stepLogit, test_sub_X, testing_sub$case_status, "Logisitic Regression Step")
+```
+
+
+
+```{r Prepare data for XGBoost model}
+
+#Create labels and predictor datasets for XGBoost model
+train_label <- training$case_status 
+test_label <- testing$case_status
+data_train <- as.matrix(subset(training, select = -c(case_status))) 
+data_test <- as.matrix(subset(testing, select = -c(case_status)))
+
+#Convert to numeric, subtract one to retain binary, and convert whole dataset to a matrix
+train_label_max <- as.matrix(as.numeric(train_label)-1)
+test_label_max <- as.matrix(as.numeric(test_label)-1)
+```
+
+
+
+```{r Create XGBoost Matrices}
+#Prepare XGBoost Matrices 
+dtrain <- xgb.DMatrix(data = data_train, label=train_label_max)
+dtest <- xgb.DMatrix(data = data_test, label=test_label_max)
+
+```
+
+
+
+```{r Parameters list}
+#Establish parameters for XGBoost model
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.3, gamma=0, max_depth=20, min_child_weight=1, subsample=1, colsample_bytree=1)
+```
+
+
+
+```{r XGBoost1}
+#First XGBoost model training
+
+xgb1 <- xgboost(data = data_train, label = train_label_max, params = params, nrounds = 100, verbose = 1, print_every_n = 10, early_stopping_rounds = 20, save_period = 0, save_name = "xgboost.model")
+
+```
+
+
+```{r XGBoost2}
+#Second XGBoost model training
+xgb2 <- xgb.train (params = params, data = dtrain, nrounds = 100, print_every_n = 10, early_stop_round = 10, maximize = F , eval_metric = "error", eval_metric = "auc")
+```
+
+
+
+```{r XGBoost model prediction}
+#XGBoost model prediction with 0.9 classification threshold
+xgbpred <- predict(xgb1, data_test)
+xgbprediction <- ifelse (xgbpred > 0.9,1,0)
+
+#Convert labels and test predicted variable to factors for analysis
+test_label_factor <- as.factor(test_label)
+xgbpred_factor <- as.factor(xgbprediction)
+
+#Create confusion matrix for evalution
+confxgb1 <- confusionMatrix(xgbpred_factor, test_label, positive = "1")
+confxgb1
+```
+
+
+```{r}
+#Model prediction with 0.9 classification threshold
+xgbpred2 <- predict(xgb2, data_test)
+xgbprediction2 <- ifelse (xgbpred2 > 0.9,1,0)
+
+#Convert labels and test predicted variable to factors for analysis
+test_label_factor <- as.factor(test_label)
+xgbpred2_factor <- as.factor(xgbprediction2)
+
+#Confusion matrix
+confxgb2 <- confusionMatrix(xgbpred2_factor, test_label, positive = "1")
+confxgb2
+```
+
+
+
+```{r}
+#view variable importance plot
+mat <- xgb.importance(feature_names = colnames(data_train),model = xgb1)
+xgb.plot.importance(importance_matrix = mat[1:20]) 
+```
